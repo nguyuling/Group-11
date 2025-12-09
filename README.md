@@ -44,9 +44,11 @@ The Goal: To accurately distinguish and predict the __four major leukemia subtyp
 This repository contains the complete pipeline for multi-class classification:
 
 1. __Data Wrangling__ : Cleaning and preprocessing raw microarray data.
-```data_wrangling.py
-GSE13164_cleaned_features.csv
-GSE13164_cleaned_labels.csv```
+```text
+    data_wrangling.py
+    GSE13164_cleaned_features.csv
+    GSE13164_cleaned_labels.csv
+```
 
 2. __Exploratory Data Analysis__ : Identifying key genes showing differential expression across subtypes.
 
