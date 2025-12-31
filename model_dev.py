@@ -1,11 +1,13 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.linear_model import LinearRegression
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_squared_error, r2_score
+from scipy import stats
 
 # -------------------------------------------------------------------
 # Config
@@ -17,7 +19,6 @@ RANDOM_STATE = 42
 
 
 def load_and_prepare():
-    """Load cleaned features/labels, align on Sample_ID, and return X, y, meta."""
     features_df = pd.read_csv(FEATURES_PATH, index_col=0)
     labels_df = pd.read_csv(LABELS_PATH)
 
@@ -36,6 +37,124 @@ def load_and_prepare():
     X = combined.drop(columns=meta_cols)
 
     return X, y, combined
+
+
+def analyze_differential_genes(combined, X, top_n=20):
+    """
+    Identify genes that differ most between leukemia types.
+    Uses ANOVA F-statistic for multi-class comparison.
+    """
+    print("\n" + "="*60)
+    print("DIFFERENTIAL GENE EXPRESSION ANALYSIS")
+    print("="*60)
+    
+    # Get leukemia type labels
+    if "Leukemia_Type" in combined.columns:
+        groups = combined["Leukemia_Type"]
+    else:
+        print("Warning: No Leukemia_Type column found")
+        return None
+    
+    unique_types = groups.unique()
+    print(f"\nComparing {len(unique_types)} leukemia types: {list(unique_types)}")
+    print(f"Sample counts per type:")
+    print(groups.value_counts())
+    
+    # Calculate F-statistic and p-value for each gene
+    gene_stats = []
+    for gene in X.columns:
+        gene_expr = X[gene]
+        # Group gene expression by leukemia type
+        groups_data = [gene_expr[groups == lt].values for lt in unique_types]
+        
+        # Perform one-way ANOVA
+        f_stat, p_value = stats.f_oneway(*groups_data)
+        
+        # Calculate mean expression per group
+        group_means = {lt: gene_expr[groups == lt].mean() for lt in unique_types}
+        
+        gene_stats.append({
+            'gene': gene,
+            'f_statistic': f_stat,
+            'p_value': p_value,
+            **{f'mean_{lt}': group_means[lt] for lt in unique_types}
+        })
+    
+    # Create DataFrame and sort by F-statistic
+    diff_genes_df = pd.DataFrame(gene_stats)
+    diff_genes_df = diff_genes_df.sort_values('f_statistic', ascending=False)
+    
+    # Display top differentially expressed genes
+    print(f"\nTop {top_n} Differentially Expressed Genes:")
+    print("-" * 60)
+    
+    display_cols = ['gene', 'f_statistic', 'p_value'] + [c for c in diff_genes_df.columns if c.startswith('mean_')]
+    top_genes_df = diff_genes_df[display_cols].head(top_n)
+    
+    for idx, row in top_genes_df.iterrows():
+        print(f"\n{row['gene']}")
+        print(f"  F-statistic: {row['f_statistic']:.2f}, p-value: {row['p_value']:.2e}")
+        for col in display_cols[3:]:
+            leuk_type = col.replace('mean_', '')
+            print(f"  {leuk_type}: {row[col]:.3f}")
+    
+    return diff_genes_df
+
+
+def plot_top_genes(combined, X, diff_genes_df, top_n=5):
+    """
+    Visualize expression of top differentially expressed genes across leukemia types.
+    """
+    if diff_genes_df is None:
+        return
+    
+    top_genes = diff_genes_df.head(top_n)['gene'].tolist()
+    groups = combined["Leukemia_Type"]
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+    
+    for i, gene in enumerate(top_genes[:6]):
+        ax = axes[i]
+        gene_expr = X[gene]
+        
+        # Create dataframe for plotting
+        plot_data = pd.DataFrame({
+            'Expression': gene_expr.values,
+            'Leukemia_Type': groups.values
+        })
+        
+        # Box plot
+        sns.boxplot(data=plot_data, x='Leukemia_Type', y='Expression', ax=ax)
+        ax.set_title(f'{gene}', fontsize=10, fontweight='bold')
+        ax.set_xlabel('')
+        ax.tick_params(axis='x', rotation=45)
+        
+    # Remove empty subplots
+    for i in range(len(top_genes), 6):
+        fig.delaxes(axes[i])
+    
+    plt.tight_layout()
+    plt.suptitle('Top Differentially Expressed Genes', y=1.02, fontsize=14, fontweight='bold')
+    plt.show()
+    
+    # Create heatmap of top genes
+    top_genes_for_heatmap = diff_genes_df.head(20)['gene'].tolist()
+    heatmap_data = X[top_genes_for_heatmap].T
+    
+    # Sort samples by leukemia type for better visualization
+    sorted_indices = np.argsort(groups.values)
+    heatmap_data = heatmap_data.iloc[:, sorted_indices]
+    
+    plt.figure(figsize=(12, 8))
+    sns.heatmap(heatmap_data, cmap='RdBu_r', center=0, 
+                yticklabels=True, xticklabels=False,
+                cbar_kws={'label': 'Expression Level'})
+    plt.title('Top 20 Differentially Expressed Genes Heatmap', fontsize=14, fontweight='bold')
+    plt.ylabel('Gene')
+    plt.xlabel('Samples (sorted by Leukemia Type)')
+    plt.tight_layout()
+    plt.show()
 
 
 def evaluate_model(name, model, X_train, y_train, X_test, y_test):
@@ -95,6 +214,20 @@ def plot_predictions(result):
 def main():
     X, y, combined = load_and_prepare()
     print(f"Loaded aligned data: X shape {X.shape}, y length {len(y)}")
+    
+    # ----------------------------------------------------------------
+    # DIFFERENTIAL GENE EXPRESSION ANALYSIS
+    # ----------------------------------------------------------------
+    diff_genes_df = analyze_differential_genes(combined, X, top_n=20)
+    
+    if diff_genes_df is not None:
+        # Visualize top differentially expressed genes
+        plot_top_genes(combined, X, diff_genes_df, top_n=6)
+        
+        # Save results to CSV
+        output_file = "differential_genes_analysis.csv"
+        diff_genes_df.to_csv(output_file, index=False)
+        print(f"\nDifferential gene analysis saved to: {output_file}")
 
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
