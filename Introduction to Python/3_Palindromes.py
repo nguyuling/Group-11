@@ -1,4 +1,4 @@
-import string
+Aimport string
 original_str = input("Input a string: ")
 modified_str = original_str.lower()
 
